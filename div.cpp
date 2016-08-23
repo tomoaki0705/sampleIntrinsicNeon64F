@@ -46,7 +46,15 @@ template<> void processNormal<1>(const double *src, double *dst)
 
 int main()
 {
-	double src[] = {1
+	double src[] = {1.0f, 2.0f};
+	double dstSimd[] = {0.0f, 0.0f};
+	double dstNorm[] = {0.0f, 0.0f};
+	src[0] *= 1.1;
+	src[1] *= 1.1;
+
+	processSimd<1>(src, dstSimd);
+	processNormal<1>(src, dstSimd);
+
 //inline v_float64x2 operator / (const v_float64x2& a, const v_float64x2& b)
 //{
 //    float64x2_t reciprocal = vrecpeq_f64(b.val);
