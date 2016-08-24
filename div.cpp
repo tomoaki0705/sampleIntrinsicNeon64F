@@ -43,6 +43,7 @@ void processSimd(const srcType *src, dstType *dst, enum processKind p)
 	// round
 	srcVectorType a = vld1q_f64(src);
 	dstVectorType b;
+	int32x2_t zero = vdup_n_s32(0);
 
 	switch(p)
 	{
@@ -54,7 +55,7 @@ void processSimd(const srcType *src, dstType *dst, enum processKind p)
 		}
 		break;
 	case processRound:
-		b = vcvtaq_s64_f64(a);
+		b = vcombine_s32(vmovn_s64(vcvtaq_s64_f64(a), zero);
 		break;
 	case processFloor:
 		{
@@ -64,7 +65,7 @@ void processSimd(const srcType *src, dstType *dst, enum processKind p)
 		}
 		break;
 	case processTrunc:
-		b = vcvtq_s64_f64(a);
+		b = vcombine_s32(vmovn_s64(vcvtq_s64_f64(a)), zero);
 		break;
 	}
 	vst1q_s32(dst, b);
