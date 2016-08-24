@@ -1,9 +1,33 @@
 #include <iostream>
+#include <cstdint>
+#include <cmath>
 #include <arm_neon.h>
+
+typedef double srcType;
+typedef int32_t dstType;
+typedef float64x2_t srcVectorType;
+typedef int32x4_t dstVectorType;
 
 #if !defined(__aarch64__)
 #error "This code requires ARMv8"
 #endif
+
+#define ARM_ROUND(_value, _asm_string) \
+    int res; \
+    float temp; \
+    (void)temp; \
+    asm(_asm_string : [res] "=r" (res), [temp] "=w" (temp) : [value] "w" (_value)); \
+    return res
+#define ARM_ROUND_DBL(value) ARM_ROUND(value, "vcvtr.s32.f64 %[temp], %P[value] \n vmov %[res], %[temp]")
+
+const uint64_t seed = 0x1234567;
+uint64_t state = seed;
+
+unsigned RNG()
+{
+	state = (uint64_t)(unsigned)state* 4164903690U + (unsigned)(state >> 32);
+	return (unsigned)state;
+}
 
 //float64x2_t ;
 enum processKind 
@@ -14,11 +38,11 @@ enum processKind
 	processTrunc,
 };
 
-void processSimd(const double *src, double *dst, enum processKind p)
+void processSimd(const srcType *src, dstType *dst, enum processKind p)
 {
 	// round
-	float64x2_t a = vld1q_f64(src);
-	float64x2_t b;
+	srcVectorType a = vld1q_f64(src);
+	dstVectorType b;
 
 	switch(p)
 	{
@@ -43,89 +67,103 @@ void processSimd(const double *src, double *dst, enum processKind p)
 		b = vcvtq_s64_f64(a);
 		break;
 	}
-	vst1q_f64(dst, b);
+	vst1q_s32(dst, b);
 }
 
-template<int i> void processNormal(const double *src, double *dst)
-{
-}
-
-template<> void processNormal<1>(const double *src, double *dst)
+void processNormal(const srcType *src, dstType *dst, enum processKind p)
 {
 	for(unsigned int i = 0;i < 2;i++)
 	{
-		int x = (int)value;
-		dst[i] = (x + (x < value));
+		switch(p)
+		{
+		case processCeil:
+			{
+				int a = (int)src[i];
+				dst[i] = a - (a < src[i]);
+			}
+			break;
+		case processRound:
+			dst[i] = ARM_ROUND_DBL(src[i]);
+			break;
+		case processFloor:
+			{
+				int a = (int)src[i];
+				dst[i] = a - (a > src[i]);
+			}
+			break;
+		case processTrunc:
+			dst[i] = (dstType)src[i];
+			break;
+		}
 	}
+}
+
+void fillArray(srcType min, srcType max, srcType *array)
+{
+	double expLow = log10(min);
+	double expHigh = log10(max);
+	double diff = expHigh - expLow;
+	for(unsigned int i = 0;i < 2;i++)
+	{
+		double random = (double)RNG();
+		random = (random * diff)  / ((double)0x80000000);
+		random += expLow;
+		array[i] = pow(10, random);
+	}
+}
+
+template <typename ST, typename DT, int cLength> bool compare(const ST *src, DT *actual, DT *expected, const char *message)
+{
+	bool result = true;
+	for(unsigned int i = 0;i < cLength;i++)
+	{
+		if(actual[i] != expected[i])
+		{
+			result = false;
+			using namespace std;
+			cerr << "Verify Error (" << message << ")" << endl;
+			cerr << "Element   :" << i << endl;
+			cerr << "Source    :" << src[i] << endl;
+			cerr << "Expected  :" << expected[i] << endl;
+			cerr << "Actual    :" << actual[i] << endl;
+		}
+	}
+	return result;
+}
+
+bool verifyConvert(srcType min, srcType max)
+{
+	srcType src[] = {1.0f, 2.0f};
+	dstType dstSimd[] = {0, 0, };
+	dstType dstNorm[] = {0, 0, };
+
+	bool result = true;
+	for(unsigned int i = 0;i < 10;i++)
+	{
+		fillArray(min, max, src);
+		processSimd(src, dstSimd, processCeil);
+		processSimd(src, dstNorm, processCeil);
+		result = compare<srcType, dstType, 2>(src, dstSimd, dstNorm, "ceil") ? result : false;
+		processSimd(src, dstSimd, processFloor);
+		processSimd(src, dstNorm, processFloor);
+		result = compare<srcType, dstType, 2>(src, dstSimd, dstNorm, "floor") ? result : false;
+		processSimd(src, dstSimd, processRound);
+		processSimd(src, dstNorm, processRound);
+		result = compare<srcType, dstType, 2>(src, dstSimd, dstNorm, "round") ? result : false;
+		processSimd(src, dstSimd, processTrunc);
+		processSimd(src, dstNorm, processTrunc);
+		result = compare<srcType, dstType, 2>(src, dstSimd, dstNorm, "trunc") ? result : false;
+	}
+	return result;
 }
 
 int main()
 {
-	double src[] = {1.0f, 2.0f};
-	double dstSimd[] = {0.0f, 0.0f};
-	double dstNorm[] = {0.0f, 0.0f};
-	src[0] *= 1.1;
-	src[1] *= 1.1;
-
-	processSimd<1>(src, dstSimd);
-	processNormal<1>(src, dstSimd);
-
-//inline v_float64x2 operator / (const v_float64x2& a, const v_float64x2& b)
-//{
-//    float64x2_t reciprocal = vrecpeq_f64(b.val);
-//    reciprocal = vmulq_f64(vrecpsq_f64(b.val, reciprocal), reciprocal);
-//    reciprocal = vmulq_f64(vrecpsq_f64(b.val, reciprocal), reciprocal);
-//    reciprocal = vmulq_f64(vrecpsq_f64(b.val, reciprocal), reciprocal);
-//    return v_float64x2(vmulq_f64(a.val, reciprocal));
-//}
-//inline v_float64x2& operator /= (v_float64x2& a, const v_float64x2& b)
-//{
-//    float64x2_t reciprocal = vrecpeq_f64(b.val);
-//    reciprocal = vmulq_f64(vrecpsq_f64(b.val, reciprocal), reciprocal);
-//    reciprocal = vmulq_f64(vrecpsq_f64(b.val, reciprocal), reciprocal);
-//    reciprocal = vmulq_f64(vrecpsq_f64(b.val, reciprocal), reciprocal);
-//    a.val = vmulq_f64(a.val, reciprocal);
-//    return a;
-//}
-//   Data<R> dataA, dataB;
-//        dataB.reverse();
-//        R a = dataA, b = dataB;
-//
-//        Data<R> resC = a / b;
-//        for (int i = 0; i < R::nlanes; ++i)
-//        {
-//            EXPECT_COMPARE_EQ(dataA[i] / dataB[i], resC[i]);
-//        }
-//
-//        return *this;
-//    }
-//
-//
-inline v_int64x2 v_round(const v_float64x2& a)
-{
-    static const int64x2_t v_sign = vdupq_n_s64(((uint64_t)1) << 63),
-        v_05 = vreinterpretq_s64_f64(vdupq_n_f64(0.5f));
-
-    int64x2_t v_addition = vorrq_s64(v_05, vandq_s64(v_sign, vreinterpretq_s64_f64(a.val)));
-    return v_int64x2(vcvtq_s64_f64(vaddq_f64(a.val, vreinterpretq_f64_s64(v_addition))));
-}
-
-inline v_int64x2 v_floor(const v_float64x2& a)
-{
-    int64x2_t a1 = vcvtq_s64_f64(a.val);
-    uint64x2_t mask = vcgtq_f64(vcvtq_f64_s64(a1), a.val);
-    return v_int64x2(vaddq_s64(a1, vreinterpretq_s64_u64(mask)));
-}
-
-inline v_int64x2 v_ceil(const v_float64x2& a)
-{
-    int64x2_t a1 = vcvtq_s64_f64(a.val);
-    uint64x2_t mask = vcgtq_f64(a.val, vcvtq_f64_s64(a1));
-    return v_int64x2(vsubq_s64(a1, vreinterpretq_s64_u64(mask)));
-}
-
-inline v_int64x2 v_trunc(const v_float64x2& a)
-{ return v_int64x2(vcvtq_s64_f64(a.val)); }
-
-	return 0;
+	bool result = true;
+	result = verifyConvert(1.0f, 2.0f) ? result : false;
+	result = verifyConvert(0.9f, 1.1f) ? result : false;
+	result = verifyConvert(9.0f, 11.0f) ? result : false;
+	result = verifyConvert(99.0f, 101.0f) ? result : false;
+	result = verifyConvert(0.9f, 101.0f) ? result : false;
+	return result ? 0 : 1;
 }
