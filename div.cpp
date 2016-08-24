@@ -6,34 +6,49 @@
 #endif
 
 //float64x2_t ;
+enum processKind 
+{
+	processCeil,
+	processRound,
+	processFloor,
+	processTrunc,
+};
 
-template<int i> void processSimd(const double *src, double *dst);
-template<> void processSimd<1>(const double *src, double *dst)
+void processSimd(const double *src, double *dst, enum processKind p)
 {
 	// round
 	float64x2_t a = vld1q_f64(src);
+	float64x2_t b;
 
-    static const int64x2_t v_sign = vdupq_n_s64(((uint64_t)1) << 63),
-        v_05 = vreinterpretq_s64_f64(vdupq_n_f64(0.5f));
-    int64x2_t v_addition = vorrq_s64(v_05, vandq_s64(v_sign, vreinterpretq_s64_f64(a)));
-    vst1q_f64(dst, v_int64x2(vcvtq_s64_f64(vaddq_f64(a.val, vreinterpretq_f64_s64(v_addition)))));
+	switch(p)
+	{
+	case processCeil:
+		{
+			int32x4_t a1 = vcvtq_s32_f32(a);
+			uint32x4_t mask = vcgtq_f32(a, vcvtq_f32_s32(a1));
+			b = vsubq_s32(a1, vreinterpretq_s32_u32(mask));
+		}
+		break;
+	case processRound:
+		b = vcvtaq_s64_f64(a);
+		break;
+	case processFloor:
+		{
+			int32x4_t a1 = vcvtq_s32_f32(a);
+			uint32x4_t mask = vcgtq_f32(vcvtq_f32_s32(a1), a);
+			b = vaddq_s32(a1, vreinterpretq_s32_u32(mask));
+		}
+		break;
+	case processTrunc:
+		b = vcvtq_s64_f64(a);
+		break;
+	}
+	vst1q_f64(dst, b);
 }
 
-inline v_int64x2 v_round(const v_float64x2& a)
+template<int i> void processNormal(const double *src, double *dst)
 {
-    static const int64x2_t v_sign = vdupq_n_s64(((uint64_t)1) << 63),
-        v_05 = vreinterpretq_s64_f64(vdupq_n_f64(0.5f));
-
-    int64x2_t v_addition = vorrq_s64(v_05, vandq_s64(v_sign, vreinterpretq_s64_f64(a.val)));
-    return v_int64x2(vcvtq_s64_f64(vaddq_f64(a.val, vreinterpretq_f64_s64(v_addition))));
 }
-}
-
-void processSimd(const double *src, double *dst)
-{
-}
-
-template<int i> void processNormal(const double *src, double *dst);
 
 template<> void processNormal<1>(const double *src, double *dst)
 {
