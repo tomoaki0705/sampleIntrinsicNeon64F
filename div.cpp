@@ -107,7 +107,7 @@ void fillArray(srcType min, srcType max, srcType *array)
 	for(unsigned int i = 0;i < 2;i++)
 	{
 		double random = (double)RNG();
-		random = (random * diff)  / ((double)0x80000000);
+		random = (random * diff * 2)  / ((double)0x80000000);
 		random += expLow;
 		array[i] = pow(10, random);
 	}
